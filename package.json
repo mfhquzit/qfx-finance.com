@@ -1,0 +1,1 @@
+{ "name": "your-project-name", "version": "1.0.0", "description": "Your project description", "main": "dist/main.js", "scripts": { "start": "node dist/main.js", "build": "tsc", "test": "jest" }, "repository": { "type": "git", "url": "git+https://github.com/mfhquzit/qfx-finance.com.git" }, "author": "Your Name", "license": "ISC" }
