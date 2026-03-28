@@ -1,15 +1,25 @@
-# Dockerfile for QFX Finance
+# Dockerfile
 
-# Use the official PostgreSQL image
-FROM postgres:latest
+# Use Node.js 18 LTS as the base image
+FROM node:18
 
-# Set environment variables
-ENV POSTGRES_DB=qfx_finance
-ENV POSTGRES_USER=user
-ENV POSTGRES_PASSWORD=securepassword
+# Set the working directory
+WORKDIR /app
 
-# Expose the port
-EXPOSE 5432
+# Copy package.json and package-lock.json
+COPY package*.json ./
 
-# Keep the container running
-CMD ["postgres"]
+# Install dependencies
+RUN npm install
+
+# Copy the rest of the application files
+COPY . .
+
+# Build the application
+RUN npm run build
+
+# Expose the port the app runs on
+EXPOSE 3000
+
+# Start the application
+CMD [ "npm", "run", "start:prod" ]
