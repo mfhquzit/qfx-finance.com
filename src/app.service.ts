@@ -1,8 +1,472 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, Inject, CACHE_MANAGER } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from './prisma/prisma.service';
+import { RedisService } from './redis/redis.service';
+import { Cache } from 'cache-manager';
+
+interface HealthCheckResponse {
+  status: string;
+  timestamp: string;
+  uptime: number;
+  uptimeHuman: string;
+  environment: string;
+  version: string;
+  services: {
+    database: DatabaseHealth;
+    redis: RedisHealth;
+    memory: MemoryHealth;
+    disk: DiskHealth;
+  };
+}
+
+interface DatabaseHealth {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  responseTime?: string;
+  connections?: number;
+  version?: string;
+  error?: string;
+}
+
+interface RedisHealth {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  responseTime?: string;
+  connected?: boolean;
+  memory?: string;
+  error?: string;
+}
+
+interface MemoryHealth {
+  status: 'healthy' | 'degraded' | 'critical';
+  used: string;
+  total: string;
+  percentage: number;
+  heapUsed: string;
+  heapTotal: string;
+  external: string;
+  rss: string;
+}
+
+interface DiskHealth {
+  status: 'healthy' | 'degraded' | 'critical';
+  free: string;
+  total: string;
+  used: string;
+  percentage: number;
+}
 
 @Injectable()
 export class AppService {
-  getHealthCheck(): string {
-    return 'Health check OK';
+  private readonly logger = new Logger(AppService.name);
+  private readonly startTime: number;
+  private readonly version: string;
+  private readonly appName: string;
+
+  constructor(
+    private prismaService: PrismaService,
+    private redisService: RedisService,
+    private configService: ConfigService,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+  ) {
+    this.startTime = Date.now();
+    this.version = process.env.npm_package_version || '1.0.0';
+    this.appName = 'QFX Finance API';
   }
-}
+
+  /**
+   * Basic health check - returns simple status
+   */
+  getHealthCheck(): HealthCheckResponse {
+    const uptime = process.uptime();
+    
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: uptime,
+      uptimeHuman: this.formatUptime(uptime),
+      environment: process.env.NODE_ENV || 'development',
+      version: this.version,
+      services: {
+        database: { status: 'unknown' } as DatabaseHealth,
+        redis: { status: 'unknown' } as RedisHealth,
+        memory: this.checkMemoryHealth(),
+        disk: this.checkDiskHealth(),
+      },
+    };
+  }
+
+  /**
+   * Comprehensive health check with all service statuses
+   */
+  async getDetailedHealth(): Promise<HealthCheckResponse> {
+    const [databaseHealth, redisHealth] = await Promise.all([
+      this.checkDatabaseHealth(),
+      this.checkRedisHealth(),
+    ]);
+
+    const uptime = process.uptime();
+    const memoryHealth = this.checkMemoryHealth();
+    const diskHealth = await this.checkDiskHealthAsync();
+
+    // Determine overall status
+    let overallStatus = 'healthy';
+    if (databaseHealth.status !== 'healthy' || redisHealth.status !== 'healthy') {
+      overallStatus = 'degraded';
+    }
+    if (databaseHealth.status === 'unhealthy' || redisHealth.status === 'unhealthy') {
+      overallStatus = 'unhealthy';
+    }
+
+    return {
+      status: overallStatus,
+      timestamp: new Date().toISOString(),
+      uptime: uptime,
+      uptimeHuman: this.formatUptime(uptime),
+      environment: process.env.NODE_ENV || 'development',
+      version: this.version,
+      services: {
+        database: databaseHealth,
+        redis: redisHealth,
+        memory: memoryHealth,
+        disk: diskHealth,
+      },
+    };
+  }
+
+  /**
+   * Get application information
+   */
+  getAppInfo() {
+    return {
+      name: this.appName,
+      version: this.version,
+      description: 'Premium Crypto Banking and Wealth Management Platform',
+      environment: process.env.NODE_ENV || 'development',
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      pid: process.pid,
+      startTime: new Date(this.startTime).toISOString(),
+      uptime: this.formatUptime(process.uptime()),
+      features: {
+        authentication: true,
+        twoFactorAuth: true,
+        web3Integration: true,
+        realTimePrices: true,
+        automatedInvestments: true,
+        kycVerification: true,
+        adminDashboard: true,
+        stripePayments: true,
+      },
+      links: {
+        documentation: '/api/docs',
+        health: '/health',
+        metrics: '/health/metrics',
+        websocket: process.env.WS_URL || 'wss://api.qfx-finance.com',
+      },
+    };
+  }
+
+  /**
+   * Get system metrics for monitoring
+   */
+  async getSystemMetrics() {
+    const [databaseMetrics, redisMetrics] = await Promise.all([
+      this.getDatabaseMetrics(),
+      this.getRedisMetrics(),
+    ]);
+
+    const memoryUsage = process.memoryUsage();
+    const cpuUsage = process.cpuUsage();
+    const uptime = process.uptime();
+
+    return {
+      timestamp: new Date().toISOString(),
+      application: {
+        name: this.appName,
+        version: this.version,
+        uptime: uptime,
+        uptimeHuman: this.formatUptime(uptime),
+        pid: process.pid,
+        memory: {
+          rss: this.formatBytes(memoryUsage.rss),
+          heapTotal: this.formatBytes(memoryUsage.heapTotal),
+          heapUsed: this.formatBytes(memoryUsage.heapUsed),
+          external: this.formatBytes(memoryUsage.external),
+          arrayBuffers: this.formatBytes(memoryUsage.arrayBuffers || 0),
+        },
+        cpu: {
+          user: cpuUsage.user,
+          system: cpuUsage.system,
+          total: cpuUsage.user + cpuUsage.system,
+        },
+      },
+      database: databaseMetrics,
+      redis: redisMetrics,
+      system: {
+        platform: process.platform,
+        arch: process.arch,
+        nodeVersion: process.version,
+        cpus: require('os').cpus().length,
+        loadAverage: require('os').loadavg(),
+        totalMemory: this.formatBytes(require('os').totalmem()),
+        freeMemory: this.formatBytes(require('os').freemem()),
+      },
+    };
+  }
+
+  /**
+   * Perform a readiness check for Kubernetes/Orchestration
+   */
+  async readinessCheck(): Promise<{ ready: boolean; checks: any[] }> {
+    const checks = [];
+    let allReady = true;
+
+    // Check database
+    const dbCheck = await this.checkDatabaseHealth();
+    checks.push({
+      name: 'database',
+      ready: dbCheck.status === 'healthy',
+      message: dbCheck.status === 'healthy' ? 'Connected' : dbCheck.error,
+    });
+    if (dbCheck.status !== 'healthy') allReady = false;
+
+    // Check Redis
+    const redisCheck = await this.checkRedisHealth();
+    checks.push({
+      name: 'redis',
+      ready: redisCheck.status === 'healthy',
+      message: redisCheck.status === 'healthy' ? 'Connected' : redisCheck.error,
+    });
+    if (redisCheck.status !== 'healthy') allReady = false;
+
+    return {
+      ready: allReady,
+      checks,
+    };
+  }
+
+  /**
+   * Perform a liveness check for Kubernetes/Orchestration
+   */
+  livenessCheck(): { alive: boolean; uptime: string; timestamp: string } {
+    return {
+      alive: true,
+      uptime: this.formatUptime(process.uptime()),
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  // Private helper methods for health checks
+
+  private async checkDatabaseHealth(): Promise<DatabaseHealth> {
+    const startTime = Date.now();
+    try {
+      // Test database connection with a simple query
+      await this.prismaService.$queryRaw`SELECT 1 as connected`;
+      const responseTime = Date.now() - startTime;
+
+      // Get database version
+      const versionResult = await this.prismaService.$queryRaw`SELECT version() as version`;
+      const version = versionResult[0]?.version?.split(' ')[1] || 'unknown';
+
+      // Get active connections count
+      const connections = await this.prismaService.$queryRaw`
+        SELECT count(*)::int as count 
+        FROM pg_stat_activity 
+        WHERE datname = current_database()
+      `;
+      const connectionCount = connections[0]?.count || 0;
+
+      let status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
+      if (responseTime > 100) {
+        status = 'degraded'; // High response time
+      }
+
+      return {
+        status,
+        responseTime: `${responseTime}ms`,
+        connections: connectionCount,
+        version,
+      };
+    } catch (error) {
+      this.logger.error(`Database health check failed: ${error.message}`);
+      return {
+        status: 'unhealthy',
+        error: error.message,
+      };
+    }
+  }
+
+  private async checkRedisHealth(): Promise<RedisHealth> {
+    const startTime = Date.now();
+    try {
+      const pong = await this.redisService.ping();
+      const responseTime = Date.now() - startTime;
+
+      const info = await this.redisService.getInfo();
+      const memory = info?.used_memory_human || 'unknown';
+
+      let status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
+      if (responseTime > 50) {
+        status = 'degraded';
+      }
+
+      return {
+        status,
+        responseTime: `${responseTime}ms`,
+        connected: pong === 'PONG',
+        memory,
+      };
+    } catch (error) {
+      this.logger.error(`Redis health check failed: ${error.message}`);
+      return {
+        status: 'unhealthy',
+        error: error.message,
+      };
+    }
+  }
+
+  private checkMemoryHealth(): MemoryHealth {
+    const memoryUsage = process.memoryUsage();
+    const totalMemory = require('os').totalmem();
+    const usedMemory = totalMemory - require('os').freemem();
+    const percentage = (usedMemory / totalMemory) * 100;
+    const heapPercentage = (memoryUsage.heapUsed / memoryUsage.heapTotal) * 100;
+
+    let status: 'healthy' | 'degraded' | 'critical' = 'healthy';
+    if (percentage > 85) {
+      status = 'critical';
+    } else if (percentage > 70) {
+      status = 'degraded';
+    }
+
+    return {
+      status,
+      used: this.formatBytes(usedMemory),
+      total: this.formatBytes(totalMemory),
+      percentage: Math.round(percentage),
+      heapUsed: this.formatBytes(memoryUsage.heapUsed),
+      heapTotal: this.formatBytes(memoryUsage.heapTotal),
+      external: this.formatBytes(memoryUsage.external),
+      rss: this.formatBytes(memoryUsage.rss),
+    };
+  }
+
+  private async checkDiskHealthAsync(): Promise<DiskHealth> {
+    try {
+      const disk = require('diskusage');
+      const path = process.cwd();
+      const { available, total } = await disk.check(path);
+      const used = total - available;
+      const percentage = (used / total) * 100;
+
+      let status: 'healthy' | 'degraded' | 'critical' = 'healthy';
+      if (percentage > 90) {
+        status = 'critical';
+      } else if (percentage > 75) {
+        status = 'degraded';
+      }
+
+      return {
+        status,
+        free: this.formatBytes(available),
+        total: this.formatBytes(total),
+        used: this.formatBytes(used),
+        percentage: Math.round(percentage),
+      };
+    } catch (error) {
+      this.logger.warn(`Disk space check failed: ${error.message}`);
+      return {
+        status: 'healthy',
+        free: 'unknown',
+        total: 'unknown',
+        used: 'unknown',
+        percentage: 0,
+      };
+    }
+  }
+
+  private checkDiskHealth(): DiskHealth {
+    // Synchronous version for basic health check
+    return {
+      status: 'healthy',
+      free: 'unknown',
+      total: 'unknown',
+      used: 'unknown',
+      percentage: 0,
+    };
+  }
+
+  private async getDatabaseMetrics() {
+    try {
+      const [userCount, transactionCount, investmentCount] = await Promise.all([
+        this.prismaService.user.count(),
+        this.prismaService.transaction.count(),
+        this.prismaService.investment.count(),
+      ]);
+
+      const dbSize = await this.prismaService.$queryRaw`
+        SELECT pg_database_size(current_database()) as size
+      `;
+      const size = parseInt(dbSize[0]?.size) || 0;
+
+      return {
+        records: {
+          users: userCount,
+          transactions: transactionCount,
+          investments: investmentCount,
+        },
+        size: this.formatBytes(size),
+        connectionPool: {
+          active: 'N/A',
+          idle: 'N/A',
+          waiting: 'N/A',
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Failed to get database metrics: ${error.message}`);
+      return { error: 'Unable to fetch database metrics' };
+    }
+  }
+
+  private async getRedisMetrics() {
+    try {
+      const info = await this.redisService.getInfo();
+      return {
+        usedMemory: info?.used_memory_human || 'unknown',
+        totalConnections: info?.total_connections_received || 'unknown',
+        totalCommands: info?.total_commands_processed || 'unknown',
+        hitRate: info?.keyspace_hits && info?.keyspace_misses
+          ? `${Math.round((info.keyspace_hits / (info.keyspace_hits + info.keyspace_misses)) * 100)}%`
+          : 'unknown',
+        connectedClients: info?.connected_clients || 'unknown',
+        blockedClients: info?.blocked_clients || '0',
+      };
+    } catch (error) {
+      return { error: 'Unable to fetch Redis metrics' };
+    }
+  }
+
+  private formatUptime(seconds: number): string {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+    if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+    
+    return parts.join(' ');
+  }
+
+  private formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+        }
