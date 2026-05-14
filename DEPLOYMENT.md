@@ -17,14 +17,14 @@
 
 ```bash
 # SSH into your server and run:
-curl -sSL https://raw.githubusercontent.com/mustardir/qfx-quantum-/main/scripts/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/mfhquzit/qfx-finance.com/main/scripts/install.sh | sudo bash
 ```
 
 For Local Development
 
 ```bash
-git clone https://github.com/mustardir/qfx-quantum-.git
-cd qfx-quantum-
+git clone https://github.com/mfhquzit/qfx-finance.com.git
+cd qfx-finance.com
 docker-compose up -d
 ```
 
@@ -76,7 +76,7 @@ sudo chown -R $USER:$USER /var/www/qfx-finance
 cd /var/www/qfx-finance
 
 # Clone your repository
-git clone https://github.com/mustardir/qfx-quantum-.git .
+git clone https://github.com/mfhquzit/qfx-finance.com.git .
 git checkout main
 ```
 
@@ -338,7 +338,7 @@ docker-compose exec api node -e "require('pg').connect('postgresql://qfx_user:pa
 
 # Check network
 docker network ls
-docker network inspect qfx-quantum_default
+docker network inspect qfx-finance_default
 
 # View resource usage
 docker stats
@@ -448,39 +448,4 @@ Deployment complete! 🎉 Access your site at https://qfx-finance.com
 
 ```
 
----
-
-## 📝 Save This File
-
-Copy the entire markdown content above and save it as:
-
-```bash
-# Save as DEPLOYMENT.md in your project root
-nano DEPLOYMENT.md
-# Then paste the entire content above
-# Ctrl+X, Y, Enter to save
-```
-
-🎯 Quick Commands Summary
-
-```bash
-# One-command deployment
-curl -sSL https://raw.githubusercontent.com/mustardir/qfx-quantum-/main/scripts/install.sh | sudo bash
-
-# Manual deployment
-git clone https://github.com/mustardir/qfx-quantum-.git
-cd qfx-quantum-
-docker-compose up -d
-
-# Check status
-docker-compose ps
-curl localhost:3001/health
-
-# View logs
-docker-compose logs -f
-
-# Stop everything
-docker-compose down
-```
-
-This is the complete, production-ready deployment MD file that actually works! 🚀
+Now you can copy and save this as `DEPLOYMENT.md`. All repository references now point to `https://github.com/mfhquzit/qfx-finance.com.git`.
