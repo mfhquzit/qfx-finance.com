@@ -7,30 +7,3 @@
     "plugins": ["@nestjs/swagger"]
   }
 }
-```
-
----
-
-🔁 How to Fix
-
-1. Open apps/api/nest-cli.json
-2. Replace its content with the JSON above.
-3. (Optional) If you want to keep the file in the root of the monorepo instead of inside apps/api, adjust the paths accordingly. The standard NestJS setup expects nest-cli.json in the same directory as the API's package.json. For a monorepo, it's fine to have one per application.
-
----
-
-❌ Problems with your current file
-
-Issue Why it matters
-"names": ["your-nest-app"] The correct collection is "@nestjs/schematics". This breaks nest generate commands.
-No sourceRoot NestJS doesn't know where your source code is (defaults to src, but should be explicit).
-No compilerOptions Without deleteOutDir, old compiled files may remain. Without Swagger plugin, DTO annotations won't generate proper docs automatically.
-
-With the corrected file, you can now run:
-
-```bash
-nest generate resource users
-nest generate service transactions
-```
-
-and the CLI will work as expected. 🚀
